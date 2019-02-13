@@ -1,0 +1,14 @@
+# Rust
+target
+
+# Emacs
+*~
+\#*\#
+.\#*\#
+
+# jet brains
+.idea
+*.iml
+
+# maxOS
+.DS_Store
