@@ -5,3 +5,7 @@ authors = ["Daiju Nakayama <42.daiju@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+nalgebra = "*"
+num-traits = "*"
+typenum = "*"
+generic-array = "*"
