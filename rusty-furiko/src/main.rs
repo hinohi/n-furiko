@@ -1,68 +1,44 @@
-use std::ops::Mul;
-
-use generic_array::ArrayLength;
-use nalgebra::U3;
-use nalgebra::{Dim, DimName, Scalar, VectorN};
-use num_traits::Zero;
-use typenum::{bit::B1, UInt, UTerm};
+use nalgebra::DVector;
 
 #[derive(Debug)]
-struct NFuriko<N, D>
-where
-    N: Scalar,
-    D: Dim + DimName,
-    D::Value: Mul<UInt<UTerm, B1>>,
-    <D::Value as Mul<UInt<UTerm, B1>>>::Output: ArrayLength<N>,
-{
-    length: VectorN<N, D>,
-    mass: VectorN<N, D>,
+struct NFuriko {
+    n: usize,
+    length: DVector<f64>,
+    mass: DVector<f64>,
+    accumulated_mass: DVector<f64>,
 }
 
-impl<N, D> NFuriko<N, D>
-where
-    N: Scalar,
-    D: Dim + DimName,
-    D::Value: Mul<UInt<UTerm, B1>>,
-    <D::Value as std::ops::Mul<UInt<UTerm, B1>>>::Output: ArrayLength<N>,
-{
-    fn new_all(length: N, mass: N) -> NFuriko<N, D> {
+impl NFuriko {
+    fn new_all(n: usize, length: f64, mass: f64) -> NFuriko {
         NFuriko {
-            length: VectorN::<N, D>::from_element(length),
-            mass: VectorN::<N, D>::from_element(mass),
+            n,
+            length: DVector::from_element(n, length),
+            mass: DVector::from_element(n, mass),
+            accumulated_mass: DVector::from_iterator(n, (0..n).map(|i| (n - i) as f64 * mass)),
         }
     }
 }
 
 #[derive(Debug)]
-struct PhaseSpaceEuler<N, D>
-where
-    N: Scalar,
-    D: Dim + DimName,
-    D::Value: Mul<UInt<UTerm, B1>>,
-    <D::Value as Mul<UInt<UTerm, B1>>>::Output: ArrayLength<N>,
-{
-    position: VectorN<N, D>,
-    velocity: VectorN<N, D>,
+struct PhaseSpace2DEuler {
+    n: usize,
+    position: DVector<f64>,
+    velocity: DVector<f64>,
 }
 
-impl<N, D> PhaseSpaceEuler<N, D>
-where
-    N: Scalar + Zero,
-    D: Dim + DimName,
-    D::Value: Mul<UInt<UTerm, B1>>,
-    <D::Value as std::ops::Mul<UInt<UTerm, B1>>>::Output: ArrayLength<N>,
-{
-    fn new_all(angle: N) -> PhaseSpaceEuler<N, D> {
-        PhaseSpaceEuler {
-            position: VectorN::<N, D>::from_element(angle),
-            velocity: VectorN::<N, D>::zeros(),
+impl PhaseSpace2DEuler {
+    fn new_all(n: usize, angle: f64) -> PhaseSpace2DEuler {
+        PhaseSpace2DEuler {
+            n,
+            position: DVector::from_element(n, angle),
+            velocity: DVector::zeros(n),
         }
     }
 }
 
 fn main() {
-    let furiko = NFuriko::<f64, U3>::new_all(1.0, 1.0);
-    let ps = PhaseSpaceEuler::<f64, U3>::new_all(0.5);
+    let furiko = NFuriko::new_all(3, 1.0, 1.0);
+    let ps = PhaseSpace2DEuler::new_all(3, 0.5);
     println!("{:?}", furiko);
     println!("{:?}", ps);
 }
