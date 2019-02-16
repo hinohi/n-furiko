@@ -112,10 +112,53 @@ impl PhaseSpace {
         spec.position_energy(&p) + spec.physical_energy(&p, &v)
     }
 
-    fn evaluate_euler(&mut self, spec: &Spec, dt: f64) {
-        let a = spec.calc_acceleration(&self.position.as_slice(), &self.velocity.as_slice());
-        self.position += &self.velocity * dt;
-        self.velocity += a * dt;
+    fn evaluate_rk44(&mut self, spec: &Spec, dt: f64) {
+        let a1 = spec.calc_acceleration(&self.position.as_slice(), &self.velocity.as_slice());
+
+        let mut x1 = self.position.clone();
+        let mut v1 = self.velocity.clone();
+        x1.iter_mut()
+            .zip(self.velocity.iter())
+            .map(|(x, v)| *x += v * dt * 0.5)
+            .last();
+        v1.iter_mut()
+            .zip(a1.iter())
+            .map(|(v, a)| *v += a * dt * 0.5)
+            .last();
+        let a2 = spec.calc_acceleration(&x1.as_slice(), &v1.as_slice());
+
+        let mut x2 = self.position.clone();
+        let mut v2 = self.velocity.clone();
+        x2.iter_mut()
+            .zip(v1.iter())
+            .map(|(x, v)| *x += v * dt * 0.5)
+            .last();
+        v2.iter_mut()
+            .zip(a2.iter())
+            .map(|(v, a)| *v += a * dt * 0.5)
+            .last();
+        let a3 = spec.calc_acceleration(&x2.as_slice(), &v2.as_slice());
+
+        let mut x3 = self.position.clone();
+        let mut v3 = self.velocity.clone();
+        x3.iter_mut()
+            .zip(v2.iter())
+            .map(|(x, v)| *x += v * dt * 0.5)
+            .last();
+        v3.iter_mut()
+            .zip(a3.iter())
+            .map(|(v, a)| *v += a * dt * 0.5)
+            .last();
+        let a4 = spec.calc_acceleration(&x3.as_slice(), &v3.as_slice());
+
+        self.position += self.velocity.clone() * (dt / 6.0);
+        self.position += v1 * (dt / 3.0);
+        self.position += v2 * (dt / 3.0);
+        self.position += v3 * (dt / 6.0);
+        self.velocity += a1 * (dt / 6.0);
+        self.velocity += a2 * (dt / 3.0);
+        self.velocity += a3 * (dt / 3.0);
+        self.velocity += a4 * (dt / 6.0);
     }
 }
 
@@ -148,7 +191,7 @@ impl Furiko {
         assert!(self.dt <= resolution);
         let dt = 2_f64.powi(self.dt);
         for _ in 0..1 << resolution - self.dt {
-            self.phase_space.evaluate_euler(&self.spec, dt);
+            self.phase_space.evaluate_rk44(&self.spec, dt);
         }
         self.t += 2_f64.powi(resolution);
     }

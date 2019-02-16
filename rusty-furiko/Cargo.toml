@@ -6,7 +6,3 @@ edition = "2018"
 
 [dependencies]
 nalgebra = "*"
-num-traits = "*"
-typenum = "*"
-generic-array = "*"
-approx = "*"
