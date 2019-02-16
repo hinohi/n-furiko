@@ -1,6 +1,11 @@
 # Rust
 target
 
+# Rust wasm-pack
+pkg
+wasm-pack.log
+node_modules
+
 # Emacs
 *~
 \#*\#
