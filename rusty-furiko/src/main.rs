@@ -3,85 +3,87 @@ use nalgebra::{DMatrix, DVector};
 const G: f64 = 9.8;
 
 #[derive(Debug)]
-struct NFuriko {
+struct Spec {
     n: usize,
-    length: DVector<f64>,
-    mass: DVector<f64>,
-    accumulated_mass: DVector<f64>,
+    length: Vec<f64>,
+    mass: Vec<f64>,
+    accumulated_1: Vec<f64>,
+    accumulated_2: Vec<(f64, usize, usize)>,
 }
 
-impl NFuriko {
-    fn new_all(n: usize, length: f64, mass: f64) -> NFuriko {
-        NFuriko {
+impl Spec {
+    fn accumulate(length: &[f64], mass: &[f64]) -> (Vec<f64>, Vec<(f64, usize, usize)>) {
+        let n = length.len();
+        let mut am = Vec::from(mass.clone());
+        for i in (0..n - 1).rev() {
+            am[i] += am[i + 1];
+        }
+        let a1 = length
+            .iter()
+            .zip(am.iter())
+            .map(|(l, m)| l * m)
+            .collect::<Vec<_>>();
+        let mut a2 = Vec::with_capacity(n * n);
+        for x in 0..n {
+            for y in 0..n {
+                a2.push((am[if x > y { x } else { y }] * length[x] * length[y], x, y));
+            }
+        }
+        (a1, a2)
+    }
+    fn new_all(n: usize, length: f64, mass: f64) -> Spec {
+        let length = vec![length; n];
+        let mass = vec![mass; n];
+        let (a1, a2) = Spec::accumulate(&length, &mass);
+        Spec {
             n,
-            length: DVector::from_element(n, length),
-            mass: DVector::from_element(n, mass),
-            accumulated_mass: DVector::from_iterator(n, (0..n).map(|i| (n - i) as f64 * mass)),
+            length,
+            mass,
+            accumulated_1: a1,
+            accumulated_2: a2,
         }
     }
 
     fn position_energy(&self, position: &[f64]) -> f64 {
         let mut u = 0.0;
-        for i in 0..self.n {
-            u -= self.accumulated_mass[i] * self.length[i] * position[i].cos();
+        for (a, p) in self.accumulated_1.iter().zip(position.iter()) {
+            u -= a * p.cos();
         }
         u * G
     }
 
     fn physical_energy(&self, position: &[f64], velocity: &[f64]) -> f64 {
         let mut t = 0.0;
-        for i in 0..self.n {
-            t += self.accumulated_mass[i]
-                * self.length[i]
-                * self.length[i]
-                * velocity[i]
-                * velocity[i];
-            for j in 0..i {
-                t += self.accumulated_mass[i]
-                    * self.length[i]
-                    * self.length[j]
-                    * velocity[i]
-                    * velocity[j]
-                    * (position[i] - position[j]).cos();
-            }
-            for j in i + 1..self.n {
-                t += self.accumulated_mass[j]
-                    * self.length[i]
-                    * self.length[j]
-                    * velocity[i]
-                    * velocity[j]
-                    * (position[i] - position[j]).cos();
-            }
+        for (a, i, j) in self.accumulated_2.iter() {
+            let i = *i;
+            let j = *j;
+            t += a * velocity[i] * velocity[j] * (position[i] - position[j]).cos();
         }
         t * 0.5
     }
 
     fn calc_acceleration(&self, position: &[f64], velocity: &[f64]) -> DVector<f64> {
         let mut b = DVector::from_iterator(self.n, velocity.iter().map(|v| v * v));
-        let c = DMatrix::from_fn(self.n, self.n, |x, y| {
-            self.length[x]
-                * self.length[y]
-                * (if x > y {
-                    self.accumulated_mass[x] * (position[y] - position[x]).sin()
-                } else if x < y {
-                    self.accumulated_mass[y] * (position[y] - position[x]).sin()
-                } else {
-                    0.0
-                })
-        });
+        let c = DMatrix::from_iterator(
+            self.n,
+            self.n,
+            self.accumulated_2
+                .iter()
+                .map(|(a, i, j)| a * (position[*i] - position[*j]).sin()),
+        );
         b = c * b;
         b.iter_mut()
-            .zip(self.accumulated_mass.iter())
-            .zip(self.length.iter())
+            .zip(self.accumulated_1.iter())
             .zip(position.iter())
-            .map(|(((v, m), l), p)| *v -= G * m * l * p.sin())
+            .map(|((v, a), p)| *v -= G * a * p.sin())
             .last();
-        let a = DMatrix::from_fn(self.n, self.n, |i, j| {
-            self.accumulated_mass[if i > j { i } else { j }]
-                * self.length[i]
-                * self.length[j]
-                * (position[i] - position[j]).cos()
-        });
+        let a = DMatrix::from_iterator(
+            self.n,
+            self.n,
+            self.accumulated_2
+                .iter()
+                .map(|(a, i, j)| a * (position[*i] - position[*j]).cos()),
+        );
         let d = a.qr();
         if !d.solve_mut(&mut b) {
             eprintln!("Fail");
@@ -91,47 +93,74 @@ impl NFuriko {
 }
 
 #[derive(Debug)]
-struct PhaseSpace2DEuler<'a> {
-    furiko: &'a NFuriko,
+struct PhaseSpace {
     position: DVector<f64>,
     velocity: DVector<f64>,
 }
 
-impl<'a> PhaseSpace2DEuler<'a> {
-    fn new_all(furiko: &'a NFuriko, angle: f64) -> PhaseSpace2DEuler<'a> {
-        PhaseSpace2DEuler {
-            furiko,
-            position: DVector::from_element(furiko.n, angle),
-            velocity: DVector::zeros(furiko.n),
+impl PhaseSpace {
+    fn new_all(n: usize, angle: f64) -> PhaseSpace {
+        PhaseSpace {
+            position: DVector::from_element(n, angle),
+            velocity: DVector::zeros(n),
         }
     }
 
-    fn iterate(&mut self, dt: f64) {
-        let a = self
-            .furiko
-            .calc_acceleration(&self.position.as_slice(), &self.velocity.as_slice());
+    fn total_energy(&self, spec: &Spec) -> f64 {
+        let p = self.position.as_slice();
+        let v = self.velocity.as_slice();
+        spec.position_energy(&p) + spec.physical_energy(&p, &v)
+    }
+
+    fn evaluate_euler(&mut self, spec: &Spec, dt: f64) {
+        let a = spec.calc_acceleration(&self.position.as_slice(), &self.velocity.as_slice());
         self.position += &self.velocity * dt;
         self.velocity += a * dt;
     }
+}
 
-    fn total_energy(&self) -> f64 {
-        let p = self.position.as_slice();
-        let v = self.velocity.as_slice();
-        self.furiko.position_energy(&p) + self.furiko.physical_energy(&p, &v)
+struct Furiko {
+    spec: Spec,
+    phase_space: PhaseSpace,
+    t: f64,
+    dt: i32,
+}
+
+impl Furiko {
+    fn new(n: usize) -> Furiko {
+        Furiko {
+            spec: Spec::new_all(n, 0.5, 1.0),
+            phase_space: PhaseSpace::new_all(n, 3.0),
+            t: 0.0,
+            dt: -20,
+        }
+    }
+
+    fn set_dt(&mut self, n: i32) {
+        self.dt = n;
+    }
+
+    fn energy(&self) -> f64 {
+        self.phase_space.total_energy(&self.spec)
+    }
+
+    fn evaluate(&mut self, resolution: i32) {
+        assert!(self.dt <= resolution);
+        let dt = 2_f64.powi(self.dt);
+        for _ in 0..1 << resolution - self.dt {
+            self.phase_space.evaluate_euler(&self.spec, dt);
+        }
+        self.t += 2_f64.powi(resolution);
     }
 }
 
 fn main() {
-    let furiko = NFuriko::new_all(3, 0.5, 1.0);
-    let mut ps = PhaseSpace2DEuler::new_all(&furiko, 3.0);
-    let mut t = 0.0;
-    let dt = 2_f64.powi(-15);
-    let out_interval = 2.0_f64.powi(-7);
-    while t < 10.0 {
-        if t % out_interval == 0.0 {
-            println!("{} {}", t, ps.total_energy());
-        }
-        ps.iterate(dt);
-        t += dt;
+    let mut furiko = Furiko::new(3);
+    furiko.set_dt(-20);
+    let resolution = -7;
+    println!("{} {}", furiko.t, furiko.energy());
+    for _ in 0..10 << (-resolution) {
+        furiko.evaluate(resolution);
+        println!("{} {}", furiko.t, furiko.energy());
     }
 }
