@@ -3,101 +3,8 @@ use std::f64::consts::PI;
 use std::rc::Rc;
 
 use nalgebra::{DMatrix, DVector};
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 
-const G: f64 = 9.8;
-
-#[derive(Debug)]
-struct Spec {
-    n: usize,
-    length: Vec<f64>,
-    mass: Vec<f64>,
-    accumulated_1: Vec<f64>,
-    accumulated_2: Vec<(f64, usize, usize)>,
-}
-
-fn accumulate(length: &[f64], mass: &[f64]) -> (Vec<f64>, Vec<(f64, usize, usize)>) {
-    let n = length.len();
-    let mut am = Vec::from(mass.clone());
-    for i in (0..n - 1).rev() {
-        am[i] += am[i + 1];
-    }
-    let a1 = length
-        .iter()
-        .zip(am.iter())
-        .map(|(l, m)| l * m)
-        .collect::<Vec<_>>();
-    let mut a2 = Vec::with_capacity(n * n);
-    for x in 0..n {
-        for y in 0..n {
-            a2.push((am[if x > y { x } else { y }] * length[x] * length[y], x, y));
-        }
-    }
-    (a1, a2)
-}
-
-impl Spec {
-    fn new_all(n: usize, length: f64, mass: f64) -> Spec {
-        let length = vec![length; n];
-        let mass = vec![mass; n];
-        let (a1, a2) = accumulate(&length, &mass);
-        Spec {
-            n,
-            length,
-            mass,
-            accumulated_1: a1,
-            accumulated_2: a2,
-        }
-    }
-
-    fn position_energy(&self, position: &[f64]) -> f64 {
-        let mut u = 0.0;
-        for (a, p) in self.accumulated_1.iter().zip(position.iter()) {
-            u -= a * p.cos();
-        }
-        u * G
-    }
-
-    fn physical_energy(&self, position: &[f64], velocity: &[f64]) -> f64 {
-        let mut t = 0.0;
-        for (a, i, j) in self.accumulated_2.iter() {
-            let i = *i;
-            let j = *j;
-            t += a * velocity[i] * velocity[j] * (position[i] - position[j]).cos();
-        }
-        t * 0.5
-    }
-
-    fn calc_acceleration(&self, position: &[f64], velocity: &[f64]) -> DVector<f64> {
-        let mut b = DVector::from_iterator(self.n, velocity.iter().map(|v| v * v));
-        let c = DMatrix::from_iterator(
-            self.n,
-            self.n,
-            self.accumulated_2
-                .iter()
-                .map(|(a, i, j)| a * (position[*i] - position[*j]).sin()),
-        );
-        b = c * b;
-        b.iter_mut()
-            .zip(self.accumulated_1.iter())
-            .zip(position.iter())
-            .map(|((v, a), p)| *v -= G * a * p.sin())
-            .last();
-        let a = DMatrix::from_iterator(
-            self.n,
-            self.n,
-            self.accumulated_2
-                .iter()
-                .map(|(a, i, j)| a * (position[*i] - position[*j]).cos()),
-        );
-        let d = a.qr();
-        if !d.solve_mut(&mut b) {
-            eprintln!("Fail");
-        }
-        b
-    }
-}
+mod furiko;
 
 pub struct Furiko {
     spec: Spec,
@@ -212,67 +119,78 @@ impl Furiko {
     }
 }
 
-fn window() -> web_sys::Window {
-    web_sys::window().expect("no global `window` exists")
-}
+#[cfg(target_arc = "wasm32")]
+mod js {
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
-fn request_animation_frame(f: &Closure<FnMut()>) {
-    window()
-        .request_animation_frame(f.as_ref().unchecked_ref())
-        .expect("should register `requestAnimationFrame` OK");
-}
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
 
-fn document() -> web_sys::Document {
-    window()
-        .document()
-        .expect("should have a document on window")
-}
+    use crate::Furiko;
 
-fn body() -> web_sys::HtmlElement {
-    document().body().expect("document should have a body")
-}
+    fn window() -> web_sys::Window {
+        web_sys::window().expect("no global `window` exists")
+    }
 
-#[wasm_bindgen(start)]
-pub fn start() -> Result<(), JsValue> {
-    let width = 600.0;
-    let height = 600.0;
-    let scale = 100.0;
-    let canvas = document()
-        .create_element("canvas")?
-        .dyn_into::<web_sys::HtmlCanvasElement>()?;
-    body().append_child(&canvas)?;
-    canvas.set_width(width as u32);
-    canvas.set_height(height as u32);
-    canvas.style().set_property("border", "solid")?;
-    let context = canvas
-        .get_context("2d")?
-        .unwrap()
-        .dyn_into::<web_sys::CanvasRenderingContext2d>()?;
-    context.set_fill_style(&JsValue::from_str("rgba(255, 255, 255, 0.1)"));
+    fn request_animation_frame(f: &Closure<FnMut()>) {
+        window()
+            .request_animation_frame(f.as_ref().unchecked_ref())
+            .expect("should register `requestAnimationFrame` OK");
+    }
 
-    let mut furiko = Furiko::new(6);
-    furiko.set_dt(-12);
+    fn document() -> web_sys::Document {
+        window()
+            .document()
+            .expect("should have a document on window")
+    }
 
-    let f = Rc::new(RefCell::new(None));
-    let g = f.clone();
-    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
-        furiko.evaluate(-6);
+    fn body() -> web_sys::HtmlElement {
+        document().body().expect("document should have a body")
+    }
 
-        context.rect(0.0, 0.0, width, height);
-        context.fill();
+    #[wasm_bindgen(start)]
+    pub fn start() -> Result<(), JsValue> {
+        let width = 600.0;
+        let height = 600.0;
+        let scale = 100.0;
+        let canvas = document()
+            .create_element("canvas")?
+            .dyn_into::<web_sys::HtmlCanvasElement>()?;
+        body().append_child(&canvas)?;
+        canvas.set_width(width as u32);
+        canvas.set_height(height as u32);
+        canvas.style().set_property("border", "solid")?;
+        let context = canvas
+            .get_context("2d")?
+            .unwrap()
+            .dyn_into::<web_sys::CanvasRenderingContext2d>()?;
+        context.set_fill_style(&JsValue::from_str("rgba(1, 1, 1, 1)"));
 
-        context.begin_path();
-        context.move_to(width * 0.5, height * 0.5);
-        for (x, y) in furiko.get_x() {
-            let x = width * 0.5 + x * scale;
-            let y = height * 0.5 - y * scale;
-            context.line_to(x, y);
-        }
-        context.stroke();
+        let mut furiko = Furiko::new(6);
+        furiko.set_dt(-12);
 
-        request_animation_frame(f.borrow().as_ref().unwrap());
-    }) as Box<FnMut()>));
+        let f = Rc::new(RefCell::new(None));
+        let g = f.clone();
+        *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+            furiko.evaluate(-6);
 
-    request_animation_frame(g.borrow().as_ref().unwrap());
-    Ok(())
+            context.rect(0.0, 0.0, width, height);
+            context.fill();
+
+            context.begin_path();
+            context.move_to(width * 0.5, height * 0.5);
+            for (x, y) in furiko.get_x() {
+                let x = width * 0.5 + x * scale;
+                let y = height * 0.5 - y * scale;
+                context.line_to(x, y);
+            }
+            context.stroke();
+
+            request_animation_frame(f.borrow().as_ref().unwrap());
+        }) as Box<FnMut()>));
+
+        request_animation_frame(g.borrow().as_ref().unwrap());
+        Ok(())
+    }
 }
